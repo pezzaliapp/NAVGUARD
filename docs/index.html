@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#090b10">
+<title>NAVGUARD — Download Android</title>
+<style>
+:root{color-scheme:dark;--bg:#090b10;--panel:#12161e;--text:#f5f7fb;--muted:#aab2c0;--green:#71e3aa;--line:#242b36;--red:#ff786f}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:720px;margin:auto;padding:42px 20px 70px}.eyebrow{color:var(--green);font-weight:700;letter-spacing:.12em;font-size:.78rem}.brand{font-size:clamp(2.3rem,8vw,4.2rem);line-height:.95;margin:10px 0 14px;letter-spacing:-.045em}.lead{font-size:1.1rem;color:var(--muted);margin:0 0 28px}.card{background:var(--panel);border:1px solid var(--line);border-radius:20px;padding:22px;margin:18px 0}.status{display:flex;gap:12px;align-items:center}.dot{width:12px;height:12px;border-radius:50%;background:var(--green);box-shadow:0 0 18px rgba(113,227,170,.45)}.btn{display:block;width:100%;padding:17px 18px;border-radius:14px;text-decoration:none;text-align:center;font-weight:800;margin-top:14px;border:1px solid var(--line)}.primary{background:var(--green);color:#07110d;border-color:var(--green)}.secondary{background:#171c25;color:var(--text)}.small{font-size:.91rem;color:var(--muted)}h2{font-size:1.08rem;margin:0 0 10px}ol{padding-left:22px;margin-bottom:0}.warn{border-left:3px solid var(--red)}footer{margin-top:34px;color:#7f8997;font-size:.86rem}.hide{display:none}</style>
+</head>
+<body>
+<main>
+  <div class="eyebrow">GNSS INTEGRITY MONITOR</div>
+  <h1 class="brand">NAVGUARD</h1>
+  <p class="lead">Versione sperimentale Android. Diagnostica GNSS raw, sensori inerziali, Trust Score e mappa. Analisi sul dispositivo.</p>
+
+  <section class="card">
+    <div class="status"><span class="dot"></span><strong>NAVGUARD v0.2.0</strong></div>
+    <a class="btn primary" href="./NAVGUARD-v0.2.0.apk" download>SCARICA APK</a>
+    <a id="chromeBtn" class="btn secondary hide" href="#">APRI QUESTA PAGINA IN CHROME</a>
+    <p class="small">Se hai aperto questo link dentro WhatsApp e il download non parte, usa “Apri questa pagina in Chrome” e poi tocca “Scarica APK”.</p>
+  </section>
+
+  <section class="card">
+    <h2>Installazione su Samsung</h2>
+    <ol>
+      <li>Scarica l’APK.</li>
+      <li>Se Samsung lo blocca: <strong>Impostazioni → Sicurezza e privacy → Blocco automatico → Disattiva</strong>.</li>
+      <li>Installa NAVGUARD.</li>
+      <li><strong>Riattiva subito Blocco automatico</strong> dopo l’installazione.</li>
+    </ol>
+  </section>
+
+  <section class="card warn">
+    <h2>Versione sperimentale</h2>
+    <p class="small">NAVGUARD non certifica jamming o spoofing e non determina l’origine delle anomalie rilevate. Non è uno strumento aeronautico, marittimo, militare o di sicurezza e non deve essere usato per decisioni critiche di navigazione. La disattivazione del Blocco automatico riduce temporaneamente una protezione del dispositivo.</p>
+  </section>
+
+  <footer>Gratuito · Nessuna pubblicità · © 2026 Alessandro Pezzali</footer>
+</main>
+<script>
+(function(){
+  const ua=navigator.userAgent||'';
+  const android=/Android/i.test(ua);
+  const btn=document.getElementById('chromeBtn');
+  if(android){
+    const host=location.host;
+    const path=location.pathname.replace(/^\//,'');
+    btn.href=`intent://${host}/${path}#Intent;scheme=https;package=com.android.chrome;end`;
+    btn.classList.remove('hide');
+  }
+})();
+</script>
+</body>
+</html>
