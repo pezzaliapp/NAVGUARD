@@ -22,8 +22,16 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:text="Android v0.2.1"
+            android:textColor="@color/muted"
+            android:textSize="11sp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text="GNSS integrity monitor • local only"
+            android:text="GNSS integrity monitor • local analysis"
             android:textColor="@color/muted"
             android:textSize="14sp" />
 
@@ -76,6 +84,30 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="24dp"
+            android:text="MAPPA"
+            android:textColor="@color/muted"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <WebView
+            android:id="@+id/mapView"
+            android:layout_width="match_parent"
+            android:layout_height="280dp"
+            android:layout_marginTop="10dp"
+            android:background="@color/panel" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="7dp"
+            android:text="Cartografia © OpenStreetMap contributors • la mappa richiede Internet; il monitoraggio GNSS no."
+            android:textColor="@color/muted"
+            android:textSize="10sp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
             android:text="DIAGNOSTICA"
             android:textColor="@color/muted"
             android:textSize="12sp"
@@ -97,7 +129,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="20dp"
-            android:text="NAVGUARD non certifica la presenza di jamming o spoofing. Evidenzia soltanto anomalie e incoerenze compatibili con interferenze GNSS. Nessun dato viene inviato in rete."
+            android:text="NAVGUARD non certifica la presenza di jamming o spoofing. Evidenzia anomalie e incoerenze compatibili con interferenze GNSS. L'analisi GNSS resta sul dispositivo. Quando la mappa è visibile, vengono richieste online le sole tessere cartografiche dell'area mostrata."
             android:textColor="@color/muted"
             android:textSize="12sp" />
 

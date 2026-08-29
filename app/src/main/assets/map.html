@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<style>
+html,body,#map{margin:0;width:100%;height:100%;overflow:hidden;background:#161a20;font-family:system-ui,-apple-system,sans-serif}
+#tiles,#overlay{position:absolute;inset:0;overflow:hidden}
+.tile{position:absolute;width:256px;height:256px;border:0}
+#accuracy{position:absolute;border:2px solid rgba(118,230,177,.9);background:rgba(118,230,177,.13);border-radius:50%;transform:translate(-50%,-50%);display:none}
+.marker{position:absolute;width:16px;height:16px;border-radius:50%;transform:translate(-50%,-50%);box-shadow:0 0 0 4px rgba(0,0,0,.28)}
+#current{background:#76e6b1;display:none}
+#trusted{width:10px;height:10px;background:#62c5ff;display:none}
+#trail{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
+#message{position:absolute;left:12px;top:12px;right:12px;padding:10px 12px;background:rgba(11,13,16,.82);color:#adb3be;font-size:13px;border-radius:8px}
+#legend{position:absolute;left:10px;bottom:9px;background:rgba(11,13,16,.82);color:#e7ebf1;padding:6px 8px;border-radius:7px;font-size:10px}
+#attrib{position:absolute;right:5px;bottom:4px;background:rgba(255,255,255,.78);padding:2px 4px;font-size:9px;color:#222}
+#attrib a{color:#222}
+</style>
+</head>
+<body>
+<div id="map">
+  <div id="tiles"></div>
+  <canvas id="trail"></canvas>
+  <div id="accuracy"></div>
+  <div id="trusted" class="marker"></div>
+  <div id="current" class="marker"></div>
+  <div id="message">In attesa del primo fix GNSS…</div>
+  <div id="legend">● posizione corrente &nbsp; ● ultimo fix affidabile</div>
+  <div id="attrib">© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a></div>
+</div>
+<script>
+(() => {
+  const Z=16, TS=256, R=6378137;
+  let state=null;
+  const tiles=document.getElementById('tiles'), current=document.getElementById('current'), trusted=document.getElementById('trusted'), accuracy=document.getElementById('accuracy'), message=document.getElementById('message'), canvas=document.getElementById('trail');
+  function clampLat(lat){return Math.max(-85.05112878,Math.min(85.05112878,lat));}
+  function world(lat,lon){lat=clampLat(lat); const n=2**Z, r=lat*Math.PI/180; return {x:(lon+180)/360*n,y:(1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*n};}
+  function pixel(lat,lon,cx,cy){const p=world(lat,lon); return {x:innerWidth/2+(p.x-cx)*TS,y:innerHeight/2+(p.y-cy)*TS};}
+  function draw(){
+    if(!state) return;
+    const c=world(state.lat,state.lon), w=innerWidth, h=innerHeight;
+    tiles.innerHTML='';
+    const minX=Math.floor(c.x-w/(2*TS))-1, maxX=Math.floor(c.x+w/(2*TS))+1, minY=Math.floor(c.y-h/(2*TS))-1, maxY=Math.floor(c.y+h/(2*TS))+1, n=2**Z;
+    for(let ty=minY;ty<=maxY;ty++) for(let tx=minX;tx<=maxX;tx++) {
+      if(ty<0||ty>=n) continue;
+      const wrapped=((tx%n)+n)%n, img=new Image(); img.className='tile'; img.alt=''; img.referrerPolicy='origin'; img.src=`https://tile.openstreetmap.org/${Z}/${wrapped}/${ty}.png`;
+      img.style.left=(w/2+(tx-c.x)*TS)+'px'; img.style.top=(h/2+(ty-c.y)*TS)+'px'; tiles.appendChild(img);
+    }
+    const cp={x:w/2,y:h/2}; current.style.left=cp.x+'px'; current.style.top=cp.y+'px'; current.style.display='block'; current.style.background=state.trust>=75?'#76e6b1':(state.trust>=45?'#ffd166':'#ff6b6b');
+    const mpp=Math.cos(state.lat*Math.PI/180)*2*Math.PI*R/(TS*(2**Z)); const radius=Math.max(5,Math.min(120,state.acc/mpp)); accuracy.style.left=cp.x+'px'; accuracy.style.top=cp.y+'px'; accuracy.style.width=(radius*2)+'px'; accuracy.style.height=(radius*2)+'px'; accuracy.style.display='block'; accuracy.style.borderColor=state.trust>=75?'rgba(118,230,177,.9)':'rgba(255,107,107,.9)';
+    if(Number.isFinite(state.tlat)&&Number.isFinite(state.tlon)){const tp=pixel(state.tlat,state.tlon,c.x,c.y);trusted.style.left=tp.x+'px';trusted.style.top=tp.y+'px';trusted.style.display='block';}else trusted.style.display='none';
+    canvas.width=w*devicePixelRatio; canvas.height=h*devicePixelRatio; canvas.style.width=w+'px'; canvas.style.height=h+'px'; const ctx=canvas.getContext('2d'); ctx.scale(devicePixelRatio,devicePixelRatio); ctx.strokeStyle='rgba(98,197,255,.75)';ctx.lineWidth=2;ctx.beginPath(); let first=true; (state.trail||[]).forEach(pt=>{const q=pixel(pt[0],pt[1],c.x,c.y); if(first){ctx.moveTo(q.x,q.y);first=false}else ctx.lineTo(q.x,q.y)});ctx.stroke();
+    message.style.display='none';
+  }
+  window.navguardUpdate=(lat,lon,acc,trust,tlat,tlon,trail)=>{state={lat:+lat,lon:+lon,acc:Math.max(0,+acc||0),trust:+trust,tlat:(tlat!==null&&Number.isFinite(+tlat))?+tlat:NaN,tlon:(tlon!==null&&Number.isFinite(+tlon))?+tlon:NaN,trail:Array.isArray(trail)?trail:[]};draw();};
+  addEventListener('resize',draw);
+})();
+</script>
+</body>
+</html>

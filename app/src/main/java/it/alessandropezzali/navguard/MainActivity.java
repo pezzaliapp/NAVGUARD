@@ -19,9 +19,13 @@ import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
 import android.widget.TextView;
 
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
@@ -29,7 +33,7 @@ import java.util.Set;
  * NAVGUARD - GNSS integrity monitor.
  * Author: Alessandro Pezzali
  *
- * Local-only proof of concept. No network permission is requested.
+ * GNSS analysis stays on device. Only OpenStreetMap tiles are fetched for the map.
  */
 public class MainActivity extends Activity implements SensorEventListener, LocationListener {
     private static final int REQ_LOCATION = 1001;
@@ -38,6 +42,7 @@ public class MainActivity extends Activity implements SensorEventListener, Locat
     private TextView statusView;
     private TextView reasonView;
     private TextView diagnosticsView;
+    private WebView mapView;
 
     private LocationManager locationManager;
     private SensorManager sensorManager;
@@ -59,6 +64,8 @@ public class MainActivity extends Activity implements SensorEventListener, Locat
     private Location previousLocation;
     private long previousLocationTimeMs = 0L;
     private Location currentLocation;
+    private Location lastTrustedLocation;
+    private final List<Location> locationTrail = new ArrayList<>();
     private boolean suspiciousJump = false;
     private double lastJumpMeters = 0.0;
     private double lastComputedSpeedMps = 0.0;
@@ -129,6 +136,8 @@ public class MainActivity extends Activity implements SensorEventListener, Locat
         statusView = findViewById(R.id.statusText);
         reasonView = findViewById(R.id.reasonText);
         diagnosticsView = findViewById(R.id.diagnosticsText);
+        mapView = findViewById(R.id.mapView);
+        configureMap();
 
         locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
         sensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
@@ -139,6 +148,18 @@ public class MainActivity extends Activity implements SensorEventListener, Locat
         } else {
             startGnssMonitoring();
         }
+    }
+
+    private void configureMap() {
+        WebSettings settings = mapView.getSettings();
+        settings.setJavaScriptEnabled(true);
+        settings.setDomStorageEnabled(false);
+        settings.setBuiltInZoomControls(false);
+        settings.setDisplayZoomControls(false);
+        settings.setUserAgentString("NAVGUARD/0.2.1 Android; https://github.com/pezzaliapp/NAVGUARD");
+        mapView.setVerticalScrollBarEnabled(false);
+        mapView.setHorizontalScrollBarEnabled(false);
+        mapView.loadUrl("file:///android_asset/map.html");
     }
 
     private void registerImuSensors() {
@@ -201,6 +222,8 @@ public class MainActivity extends Activity implements SensorEventListener, Locat
 
         previousLocation = new Location(location);
         previousLocationTimeMs = now;
+        locationTrail.add(new Location(location));
+        while (locationTrail.size() > 30) locationTrail.remove(0);
         recomputeIntegrity();
     }
 
@@ -263,6 +286,9 @@ public class MainActivity extends Activity implements SensorEventListener, Locat
 
         score = Math.max(0, Math.min(100, score));
         lastTrust = score;
+        if (score >= 75 && currentLocation != null && !suspiciousJump) {
+            lastTrustedLocation = new Location(currentLocation);
+        }
         if (reasons.length() == 0) reasons.append("Dati GNSS coerenti con i sensori disponibili.");
         integrityReason = reasons.toString().trim();
         updateUi();
@@ -309,7 +335,36 @@ public class MainActivity extends Activity implements SensorEventListener, Locat
                     "\nVelocità stimata: " + String.format(Locale.ITALY, "%.1f m/s", lastComputedSpeedMps) +
                     "\nUltimo fix: " + fix
             );
+            updateMap();
         });
+    }
+
+    private void updateMap() {
+        if (mapView == null || currentLocation == null) return;
+        double trustedLat = lastTrustedLocation == null ? Double.NaN : lastTrustedLocation.getLatitude();
+        double trustedLon = lastTrustedLocation == null ? Double.NaN : lastTrustedLocation.getLongitude();
+        StringBuilder trailJson = new StringBuilder("[");
+        for (int i = 0; i < locationTrail.size(); i++) {
+            if (i > 0) trailJson.append(',');
+            Location p = locationTrail.get(i);
+            trailJson.append('[')
+                    .append(String.format(Locale.US, "%.7f", p.getLatitude()))
+                    .append(',')
+                    .append(String.format(Locale.US, "%.7f", p.getLongitude()))
+                    .append(']');
+        }
+        trailJson.append(']');
+
+        String js = String.format(Locale.US,
+                "window.navguardUpdate(%.7f,%.7f,%.1f,%d,%s,%s,%s);",
+                currentLocation.getLatitude(),
+                currentLocation.getLongitude(),
+                currentLocation.hasAccuracy() ? currentLocation.getAccuracy() : 0f,
+                lastTrust,
+                Double.isNaN(trustedLat) ? "null" : String.format(Locale.US, "%.7f", trustedLat),
+                Double.isNaN(trustedLon) ? "null" : String.format(Locale.US, "%.7f", trustedLon),
+                trailJson.toString());
+        mapView.evaluateJavascript(js, null);
     }
 
     @Override
@@ -336,6 +391,7 @@ public class MainActivity extends Activity implements SensorEventListener, Locat
     protected void onDestroy() {
         super.onDestroy();
         sensorManager.unregisterListener(this);
+        if (mapView != null) mapView.destroy();
         try {
             locationManager.removeUpdates(this);
             locationManager.unregisterGnssStatusCallback(statusCallback);
