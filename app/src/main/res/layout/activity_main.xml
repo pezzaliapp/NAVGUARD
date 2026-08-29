@@ -23,7 +23,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="2dp"
-            android:text="Android v0.2.1"
+            android:text="Android v0.3.0"
             android:textColor="@color/muted"
             android:textSize="11sp" />
 
@@ -31,7 +31,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
-            android:text="GNSS integrity monitor • local analysis"
+            android:text="GNSS Integrity Monitor"
             android:textColor="@color/muted"
             android:textSize="14sp" />
 
@@ -46,13 +46,13 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="GNSS TRUST"
+                android:text="GNSS INTEGRITY SCORE"
                 android:textColor="@color/muted"
                 android:textSize="13sp"
                 android:textStyle="bold" />
 
             <TextView
-                android:id="@+id/trustScore"
+                android:id="@+id/integrityScore"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
@@ -63,7 +63,7 @@
 
             <TextView
                 android:id="@+id/statusText"
-                android:layout_width="wrap_content"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="IN ATTESA DEL GNSS"
                 android:textColor="@color/text"
@@ -74,7 +74,8 @@
                 android:id="@+id/reasonText"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="10dp"
+                android:lineSpacingExtra="3dp"
                 android:text="Concedi l'accesso alla posizione e attendi il fix satellitare."
                 android:textColor="@color/muted"
                 android:textSize="14sp" />
@@ -100,9 +101,122 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="7dp"
-            android:text="Cartografia © OpenStreetMap contributors • la mappa richiede Internet; il monitoraggio GNSS no."
+            android:text="Cartografia © OpenStreetMap contributors • la mappa richiede una connessione Internet; l'analisi GNSS viene eseguita localmente sul dispositivo."
             android:textColor="@color/muted"
             android:textSize="10sp" />
+
+        <TextView
+            android:id="@+id/whyHeader"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:background="@color/panel"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center_vertical"
+            android:minHeight="48dp"
+            android:paddingLeft="16dp"
+            android:paddingTop="12dp"
+            android:paddingRight="16dp"
+            android:paddingBottom="12dp"
+            android:text="▸  PERCHÉ QUESTO PUNTEGGIO?"
+            android:textColor="@color/text"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:id="@+id/whyPanel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:background="@color/panel"
+            android:orientation="vertical"
+            android:paddingLeft="16dp"
+            android:paddingTop="4dp"
+            android:paddingRight="16dp"
+            android:paddingBottom="16dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/subScoresText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:lineSpacingExtra="3dp"
+                android:text="Segnale       --\nSatelliti     --\nPosizione     --\nMovimento     --\nRaw GNSS      --"
+                android:textColor="@color/text"
+                android:textSize="14sp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:text="Ogni componente vale 0-100. I componenti non misurabili sono N/D e vengono esclusi dal punteggio, non contati come zero."
+                android:textColor="@color/muted"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/logHeader"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:background="@color/panel"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center_vertical"
+            android:minHeight="48dp"
+            android:paddingLeft="16dp"
+            android:paddingTop="12dp"
+            android:paddingRight="16dp"
+            android:paddingBottom="12dp"
+            android:text="▸  REGISTRO ANOMALIE"
+            android:textColor="@color/text"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <LinearLayout
+            android:id="@+id/logPanel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:background="@color/panel"
+            android:orientation="vertical"
+            android:paddingLeft="16dp"
+            android:paddingTop="4dp"
+            android:paddingRight="16dp"
+            android:paddingBottom="16dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/anomalyLogText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:lineSpacingExtra="2dp"
+                android:text="Nessun evento registrato."
+                android:textColor="@color/text"
+                android:textSize="13sp" />
+
+            <Button
+                android:id="@+id/clearLogButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:background="@color/bg"
+                android:minHeight="48dp"
+                android:text="CANCELLA REGISTRO"
+                android:textColor="@color/accent"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="Il registro conserva in memoria gli ultimi 100 eventi significativi e viene azzerato alla chiusura dell'app. Non viene salvato né inviato in rete."
+                android:textColor="@color/muted"
+                android:textSize="11sp" />
+        </LinearLayout>
 
         <TextView
             android:layout_width="wrap_content"
@@ -120,16 +234,18 @@
             android:layout_marginTop="10dp"
             android:background="@color/panel"
             android:fontFamily="monospace"
+            android:lineSpacingExtra="2dp"
             android:padding="16dp"
-            android:text="Satelliti: --\nUsati nel fix: --\nC/N0 medio: -- dB-Hz\nCostellazioni: --\nRaw GNSS: --\nIMU: --\nUltimo fix: --"
+            android:text="Satelliti visibili:  --\nSatelliti usati:     --\nCostellazioni:       --\nC/N0 medio:          --\nRaw GNSS:            --\nAGC medio:           --\nIMU:                 --\nMagnetometro:        --\nMovimento:           --\nVelocità stimata:    --\nAccuracy:            --\nPosizione:           --\nUltimo fix:          --\nUltima pos. affid.:  --"
             android:textColor="@color/text"
-            android:textSize="14sp" />
+            android:textSize="13sp" />
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="20dp"
-            android:text="NAVGUARD non certifica la presenza di jamming o spoofing. Evidenzia anomalie e incoerenze compatibili con interferenze GNSS. L'analisi GNSS resta sul dispositivo. Quando la mappa è visibile, vengono richieste online le sole tessere cartografiche dell'area mostrata."
+            android:lineSpacingExtra="2dp"
+            android:text="NAVGUARD è uno strumento sperimentale di monitoraggio dell'integrità GNSS.\n\nNon certifica la presenza di jamming o spoofing e non determina l'origine delle anomalie rilevate.\n\nLe anomalie possono dipendere anche da ambiente, ostacoli, hardware, qualità della ricezione e condizioni radio.\n\nNon è uno strumento aeronautico, marittimo, militare o di sicurezza e non deve essere utilizzato per decisioni critiche di navigazione.\n\nLa mappa OpenStreetMap richiede accesso Internet. L'analisi GNSS viene eseguita localmente sul dispositivo."
             android:textColor="@color/muted"
             android:textSize="12sp" />
 

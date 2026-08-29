@@ -5,12 +5,15 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.location.GnssAutomaticGainControl;
+import android.location.GnssCapabilities;
 import android.location.GnssMeasurement;
 import android.location.GnssMeasurementsEvent;
 import android.location.GnssStatus;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -19,11 +22,27 @@ import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
+import android.view.View;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
+import android.widget.Button;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import it.alessandropezzali.navguard.integrity.AnomalyEvent;
+import it.alessandropezzali.navguard.integrity.AnomalyLog;
+import it.alessandropezzali.navguard.integrity.AnomalyType;
+import it.alessandropezzali.navguard.integrity.IntegrityAssessment;
+import it.alessandropezzali.navguard.integrity.IntegrityEngine;
+import it.alessandropezzali.navguard.integrity.MotionAnalyzer;
+import it.alessandropezzali.navguard.integrity.MotionState;
+import it.alessandropezzali.navguard.integrity.PositionFix;
+import it.alessandropezzali.navguard.integrity.SignalSample;
+import it.alessandropezzali.navguard.integrity.SubScore;
+
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
@@ -34,14 +53,29 @@ import java.util.Set;
  * Author: Alessandro Pezzali
  *
  * GNSS analysis stays on device. Only OpenStreetMap tiles are fetched for the map.
+ * The scoring itself lives in the Android-free integrity package.
  */
 public class MainActivity extends Activity implements SensorEventListener, LocationListener {
     private static final int REQ_LOCATION = 1001;
+    /** Periodic re-evaluation, so a lost fix is noticed without waiting for a callback. */
+    private static final long TICK_INTERVAL_MS = 2000L;
+    /** Floor between two UI refreshes; the periodic tick always gets through. */
+    private static final long UI_MIN_INTERVAL_MS = 500L;
+    private static final int TRAIL_MAX_POINTS = 30;
+    /** The log keeps 100 events; the panel shows only the most recent ones. */
+    private static final int LOG_VISIBLE_EVENTS = 10;
 
-    private TextView trustScoreView;
+    private TextView integrityScoreView;
     private TextView statusView;
     private TextView reasonView;
     private TextView diagnosticsView;
+    private TextView subScoresView;
+    private TextView anomalyLogView;
+    private TextView whyHeaderView;
+    private TextView logHeaderView;
+    private LinearLayout whyPanel;
+    private LinearLayout logPanel;
+    private Button clearLogButton;
     private WebView mapView;
 
     private LocationManager locationManager;
@@ -57,22 +91,36 @@ public class MainActivity extends Activity implements SensorEventListener, Locat
     private double avgAgcDb = Double.NaN;
 
     private boolean imuAvailable = false;
+    private boolean magnetometerAvailable = false;
     private float linearAcceleration = 0f;
     private float gyroRate = 0f;
-    private long lastImuMovementMs = 0L;
 
     private Location previousLocation;
     private long previousLocationTimeMs = 0L;
     private Location currentLocation;
     private Location lastTrustedLocation;
+    private long lastTrustedTimestampMs = 0L;
     private final List<Location> locationTrail = new ArrayList<>();
-    private boolean suspiciousJump = false;
-    private double lastJumpMeters = 0.0;
     private double lastComputedSpeedMps = 0.0;
 
-    private long lastGoodGnssMs = 0L;
-    private int lastTrust = 0;
+    // The integrity engine is the single source of the score. It is Android-free and owns the
+    // motion classifier, the rolling signal baseline and the local anomaly log.
+    private final MotionAnalyzer motionAnalyzer = new MotionAnalyzer();
+    private final AnomalyLog anomalyLog = new AnomalyLog();
+    private final IntegrityEngine integrityEngine = new IntegrityEngine(motionAnalyzer, anomalyLog);
+    private IntegrityAssessment lastAssessment;
+    private int integrityScore = 0;
     private String integrityReason = "In attesa dei dati GNSS.";
+    private long lastUiUpdateMs = 0L;
+    private final SimpleDateFormat clockFormat = new SimpleDateFormat("HH:mm:ss", Locale.ITALY);
+
+    private final Runnable integrityTick = new Runnable() {
+        @Override
+        public void run() {
+            refreshIntegrity();
+            mainHandler.postDelayed(this, TICK_INTERVAL_MS);
+        }
+    };
 
     private final GnssStatus.Callback statusCallback = new GnssStatus.Callback() {
         @Override
@@ -97,7 +145,7 @@ public class MainActivity extends Activity implements SensorEventListener, Locat
             }
             avgCn0 = cn0Count > 0 ? cn0Sum / cn0Count : Double.NaN;
             constellationCount = constellations.size();
-            recomputeIntegrity();
+            publishSignalSample();
         }
     };
 
@@ -106,24 +154,16 @@ public class MainActivity extends Activity implements SensorEventListener, Locat
         public void onGnssMeasurementsReceived(GnssMeasurementsEvent eventArgs) {
             rawGnssSeen = true;
             rawMeasurements = eventArgs.getMeasurements().size();
-            double agcSum = 0.0;
-            int agcCount = 0;
-            for (GnssMeasurement m : eventArgs.getMeasurements()) {
-                if (m.hasAutomaticGainControlLevelDb()) {
-                    double agc = m.getAutomaticGainControlLevelDb();
-                    if (!Double.isNaN(agc)) {
-                        agcSum += agc;
-                        agcCount++;
-                    }
-                }
-            }
-            avgAgcDb = agcCount > 0 ? agcSum / agcCount : Double.NaN;
-            recomputeIntegrity();
+            avgAgcDb = readAverageAgcDb(eventArgs);
+            integrityEngine.onRawMeasurements(System.currentTimeMillis(), rawMeasurements);
+            publishSignalSample();
         }
 
+        // Deprecated from API 33 but still delivered on older devices, so it is kept.
         @Override
+        @SuppressWarnings("deprecation")
         public void onStatusChanged(int status) {
-            recomputeIntegrity();
+            refreshIntegrity();
         }
     };
 
@@ -132,12 +172,20 @@ public class MainActivity extends Activity implements SensorEventListener, Locat
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        trustScoreView = findViewById(R.id.trustScore);
+        integrityScoreView = findViewById(R.id.integrityScore);
         statusView = findViewById(R.id.statusText);
         reasonView = findViewById(R.id.reasonText);
         diagnosticsView = findViewById(R.id.diagnosticsText);
+        subScoresView = findViewById(R.id.subScoresText);
+        anomalyLogView = findViewById(R.id.anomalyLogText);
+        whyHeaderView = findViewById(R.id.whyHeader);
+        logHeaderView = findViewById(R.id.logHeader);
+        whyPanel = findViewById(R.id.whyPanel);
+        logPanel = findViewById(R.id.logPanel);
+        clearLogButton = findViewById(R.id.clearLogButton);
         mapView = findViewById(R.id.mapView);
         configureMap();
+        configureExpandableSections();
 
         locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
         sensorManager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
@@ -156,15 +204,45 @@ public class MainActivity extends Activity implements SensorEventListener, Locat
         settings.setDomStorageEnabled(false);
         settings.setBuiltInZoomControls(false);
         settings.setDisplayZoomControls(false);
-        settings.setUserAgentString("NAVGUARD/0.2.1 Android; https://github.com/pezzaliapp/NAVGUARD");
+        settings.setUserAgentString("NAVGUARD/0.3.0 Android; https://github.com/pezzaliapp/NAVGUARD");
         mapView.setVerticalScrollBarEnabled(false);
         mapView.setHorizontalScrollBarEnabled(false);
         mapView.loadUrl("file:///android_asset/map.html");
     }
 
+    /** Plain framework widgets: a clickable header toggling a panel between VISIBLE and GONE. */
+    private void configureExpandableSections() {
+        whyHeaderView.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                boolean expand = whyPanel.getVisibility() != View.VISIBLE;
+                whyPanel.setVisibility(expand ? View.VISIBLE : View.GONE);
+                whyHeaderView.setText((expand ? "\u25be  " : "\u25b8  ") + "PERCHÉ QUESTO PUNTEGGIO?");
+                if (expand) renderSubScores();
+            }
+        });
+        logHeaderView.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                boolean expand = logPanel.getVisibility() != View.VISIBLE;
+                logPanel.setVisibility(expand ? View.VISIBLE : View.GONE);
+                logHeaderView.setText((expand ? "\u25be  " : "\u25b8  ") + "REGISTRO ANOMALIE");
+                if (expand) renderAnomalyLog();
+            }
+        });
+        clearLogButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                anomalyLog.clear();
+                renderAnomalyLog();
+            }
+        });
+    }
+
     private void registerImuSensors() {
         Sensor linear = sensorManager.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION);
         Sensor gyro = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE);
+        Sensor magnetic = sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD);
         if (linear != null) {
             sensorManager.registerListener(this, linear, SensorManager.SENSOR_DELAY_GAME);
             imuAvailable = true;
@@ -173,6 +251,14 @@ public class MainActivity extends Activity implements SensorEventListener, Locat
             sensorManager.registerListener(this, gyro, SensorManager.SENSOR_DELAY_GAME);
             imuAvailable = true;
         }
+        // Optional. Its absence is not an error and is never penalised: heading is secondary
+        // evidence only, and the engine simply skips that check when the sensor is missing.
+        if (magnetic != null) {
+            sensorManager.registerListener(this, magnetic, SensorManager.SENSOR_DELAY_UI);
+            magnetometerAvailable = true;
+        }
+        motionAnalyzer.setInertialSensorsPresent(imuAvailable);
+        motionAnalyzer.setMagnetometerPresent(magnetometerAvailable);
     }
 
     private void startGnssMonitoring() {
@@ -183,7 +269,76 @@ public class MainActivity extends Activity implements SensorEventListener, Locat
             locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0f, this, Looper.getMainLooper());
         } catch (SecurityException ignored) {
         }
-        recomputeIntegrity();
+        integrityEngine.onMonitoringStarted(System.currentTimeMillis());
+        detectRawGnssSupport();
+        mainHandler.removeCallbacks(integrityTick);
+        mainHandler.postDelayed(integrityTick, TICK_INTERVAL_MS);
+        refreshIntegrity();
+    }
+
+    /**
+     * AGC average over the values this event actually carries.
+     * API 33+ exposes AGC per band on the event itself; the per-measurement getter is deprecated
+     * there and is therefore NOT called. Below 33 the per-measurement getter is the only source.
+     * When no AGC is reported the result is NaN, which the engine treats as UNAVAILABLE - never
+     * as zero and never as a penalty.
+     */
+    private double readAverageAgcDb(GnssMeasurementsEvent event) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            return readAverageAgcApi33(event);
+        }
+        return readAverageAgcLegacy(event);
+    }
+
+    private double readAverageAgcApi33(GnssMeasurementsEvent event) {
+        double sum = 0.0;
+        int count = 0;
+        for (GnssAutomaticGainControl agc : event.getGnssAutomaticGainControls()) {
+            double level = agc.getLevelDb();
+            if (!Double.isNaN(level)) {
+                sum += level;
+                count++;
+            }
+        }
+        return count > 0 ? sum / count : Double.NaN;
+    }
+
+    @SuppressWarnings("deprecation")
+    private double readAverageAgcLegacy(GnssMeasurementsEvent event) {
+        double sum = 0.0;
+        int count = 0;
+        for (GnssMeasurement m : event.getMeasurements()) {
+            if (m.hasAutomaticGainControlLevelDb()) {
+                double agc = m.getAutomaticGainControlLevelDb();
+                if (!Double.isNaN(agc)) {
+                    sum += agc;
+                    count++;
+                }
+            }
+        }
+        return count > 0 ? sum / count : Double.NaN;
+    }
+
+    /**
+     * GnssCapabilities.hasMeasurements() exists from API 31. Below that Android gives no way to
+     * know, so the engine is told "unknown" (null) and simply excludes the component instead of
+     * assuming either support or absence.
+     */
+    private void detectRawGnssSupport() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            integrityEngine.setRawGnssSupported(readRawGnssSupportApi31());
+        } else {
+            integrityEngine.setRawGnssSupported(null);
+        }
+    }
+
+    private Boolean readRawGnssSupportApi31() {
+        try {
+            GnssCapabilities capabilities = locationManager.getGnssCapabilities();
+            return capabilities == null ? null : Boolean.valueOf(capabilities.hasMeasurements());
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
     @Override
@@ -192,7 +347,7 @@ public class MainActivity extends Activity implements SensorEventListener, Locat
         if (requestCode == REQ_LOCATION && grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
             startGnssMonitoring();
         } else {
-            trustScoreView.setText("0%");
+            integrityScoreView.setText("0%");
             statusView.setText("PERMESSO NECESSARIO");
             reasonView.setText("NAVGUARD necessita della posizione precisa per leggere GNSS e misure satellitari.");
         }
@@ -202,139 +357,204 @@ public class MainActivity extends Activity implements SensorEventListener, Locat
     public void onLocationChanged(Location location) {
         long now = System.currentTimeMillis();
         currentLocation = location;
-        suspiciousJump = false;
-        lastJumpMeters = 0.0;
         lastComputedSpeedMps = location.hasSpeed() ? location.getSpeed() : 0.0;
 
         if (previousLocation != null && previousLocationTimeMs > 0L) {
             double dt = Math.max(0.001, (now - previousLocationTimeMs) / 1000.0);
             double distance = previousLocation.distanceTo(location);
-            double derivedSpeed = distance / dt;
-            lastComputedSpeedMps = Math.max(lastComputedSpeedMps, derivedSpeed);
-            boolean imuQuiet = (now - lastImuMovementMs) > 2500L;
-
-            // Conservative anomaly rule: a large, very fast position jump while the IMU reports no movement.
-            if (distance > 250.0 && derivedSpeed > 80.0 && imuQuiet) {
-                suspiciousJump = true;
-                lastJumpMeters = distance;
-            }
+            lastComputedSpeedMps = Math.max(lastComputedSpeedMps, distance / dt);
         }
 
         previousLocation = new Location(location);
         previousLocationTimeMs = now;
         locationTrail.add(new Location(location));
-        while (locationTrail.size() > 30) locationTrail.remove(0);
-        recomputeIntegrity();
+        while (locationTrail.size() > TRAIL_MAX_POINTS) locationTrail.remove(0);
+
+        // The fix timestamp uses the same clock as the inertial samples, so the engine can line
+        // up a position step with the motion state that was observed at that instant.
+        syncProviderState();
+        PositionFix fix = new PositionFix(
+                location.getLatitude(),
+                location.getLongitude(),
+                location.hasAccuracy() ? location.getAccuracy() : Float.NaN,
+                location.hasSpeed() ? location.getSpeed() : Float.NaN,
+                location.hasBearing() ? location.getBearing() : Float.NaN,
+                now);
+        applyAssessment(integrityEngine.onLocation(fix));
+
+        // The engine decides eligibility; the Activity only mirrors its verdict for the map.
+        if (integrityEngine.lastTrustedTimeMs() == now) {
+            lastTrustedLocation = new Location(location);
+            lastTrustedTimestampMs = now;
+        }
     }
 
-    private void recomputeIntegrity() {
-        int score = 100;
-        StringBuilder reasons = new StringBuilder();
+    /** Periodic re-evaluation with no new GNSS data; also lets the engine notice a lost fix. */
+    private void refreshIntegrity() {
+        syncProviderState();
+        applyAssessment(integrityEngine.tick(System.currentTimeMillis()));
+    }
+
+    /** Pushes the current radio picture into the engine and folds it into the rolling baseline. */
+    private void publishSignalSample() {
         long now = System.currentTimeMillis();
+        syncProviderState();
+        applyAssessment(integrityEngine.onSignalUpdate(new SignalSample(
+                now, avgCn0, satellitesVisible, satellitesUsed, constellationCount, avgAgcDb)));
+    }
 
-        if (!locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-            score = 0;
-            reasons.append("GNSS disattivato sul dispositivo. ");
-        } else {
-            if (satellitesVisible == 0) {
-                score -= 55;
-                reasons.append("Nessun satellite visibile. ");
-            } else if (satellitesVisible < 6) {
-                score -= 20;
-                reasons.append("Pochi satelliti visibili. ");
-            }
-
-            if (satellitesUsed < 4) {
-                score -= 30;
-                reasons.append("Fix debole: meno di 4 satelliti utilizzati. ");
-            } else if (satellitesUsed >= 6) {
-                lastGoodGnssMs = now;
-            }
-
-            if (!Double.isNaN(avgCn0)) {
-                if (avgCn0 < 15.0) {
-                    score -= 30;
-                    reasons.append("Potenza media dei segnali molto bassa. ");
-                } else if (avgCn0 < 22.0) {
-                    score -= 15;
-                    reasons.append("Potenza media dei segnali ridotta. ");
-                }
-            }
-
-            if (constellationCount <= 1 && satellitesVisible >= 4) {
-                score -= 10;
-                reasons.append("Bassa diversità delle costellazioni. ");
-            }
-
-            if (suspiciousJump) {
-                score -= 55;
-                reasons.append(String.format(Locale.ITALY,
-                        "Salto di posizione incoerente con l'IMU (%.0f m). ", lastJumpMeters));
-            }
-
-            // A sudden collapse shortly after a healthy fix is more suspicious than a cold start indoors.
-            if (lastGoodGnssMs > 0 && (now - lastGoodGnssMs) < 15000L && satellitesUsed < 2 && satellitesVisible < 4) {
-                score -= 15;
-                reasons.append("Perdita improvvisa del fix dopo una ricezione valida. ");
-            }
-
-            if (!rawGnssSeen) {
-                score -= 5;
-                reasons.append("Misure GNSS raw non ancora disponibili. ");
-            }
+    private void syncProviderState() {
+        if (locationManager != null) {
+            integrityEngine.setProviderEnabled(
+                    locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER));
         }
+    }
 
-        score = Math.max(0, Math.min(100, score));
-        lastTrust = score;
-        if (score >= 75 && currentLocation != null && !suspiciousJump) {
-            lastTrustedLocation = new Location(currentLocation);
+    private void applyAssessment(IntegrityAssessment assessment) {
+        lastAssessment = assessment;
+        integrityScore = assessment.available ? assessment.score : 0;
+        integrityReason = buildReasonText(assessment);
+        long now = System.currentTimeMillis();
+        if (now - lastUiUpdateMs >= UI_MIN_INTERVAL_MS) {
+            lastUiUpdateMs = now;
+            updateUi();
         }
-        if (reasons.length() == 0) reasons.append("Dati GNSS coerenti con i sensori disponibili.");
-        integrityReason = reasons.toString().trim();
-        updateUi();
+    }
+
+    private String buildReasonText(IntegrityAssessment assessment) {
+        if (assessment == null || !assessment.available) {
+            return "In attesa dei dati GNSS.";
+        }
+        if (assessment.reasons.isEmpty()) {
+            return "Dati GNSS coerenti con i sensori disponibili.";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (String reason : assessment.reasons) {
+            if (sb.length() > 0) sb.append('\n');
+            sb.append("\u2022 ").append(reason);
+        }
+        return sb.toString();
+    }
+
+    private int colorForScore(int score) {
+        if (score < 0) return Color.rgb(166, 176, 188);
+        if (score >= 80) return Color.rgb(118, 230, 177);
+        if (score >= 60) return Color.rgb(143, 217, 192);
+        if (score >= 40) return Color.rgb(255, 209, 102);
+        if (score >= 20) return Color.rgb(255, 159, 69);
+        return Color.rgb(255, 107, 107);
+    }
+
+    private String motionLabel(MotionState state) {
+        if (state == MotionState.STATIONARY) return "FERMO";
+        if (state == MotionState.MOVING) return "IN MOVIMENTO";
+        return "N/D";
+    }
+
+    /** Renders the five components read straight from the assessment. UNAVAILABLE shows N/D. */
+    private void renderSubScores() {
+        if (subScoresView == null) return;
+        if (lastAssessment == null) {
+            subScoresView.setText("Segnale       --\nSatelliti     --\nPosizione     --"
+                    + "\nMovimento     --\nRaw GNSS      --");
+            return;
+        }
+        List<SubScore> components = lastAssessment.subScores();
+        String[] labels = {"Segnale", "Satelliti", "Posizione", "Movimento", "Raw GNSS"};
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < components.size() && i < labels.length; i++) {
+            if (i > 0) sb.append('\n');
+            SubScore component = components.get(i);
+            String value = component.available ? String.valueOf(component.rounded()) : "N/D";
+            sb.append(String.format(Locale.ITALY, "%-13s %s", labels[i], value));
+        }
+        subScoresView.setText(sb.toString());
+    }
+
+    /** Shows the most recent events; the log itself keeps its own 100-entry FIFO cap. */
+    private void renderAnomalyLog() {
+        if (anomalyLogView == null) return;
+        List<AnomalyEvent> events = anomalyLog.recent(LOG_VISIBLE_EVENTS);
+        if (events.isEmpty()) {
+            anomalyLogView.setText("Nessun evento registrato.");
+            return;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (AnomalyEvent event : events) {
+            if (sb.length() > 0) sb.append("\n\n");
+            sb.append(clockFormat.format(new Date(event.timeMs)))
+                    .append("  ")
+                    .append(anomalyTypeLabel(event.type))
+                    .append('\n')
+                    .append(event.reason);
+        }
+        if (anomalyLog.size() > events.size()) {
+            sb.append("\n\n(").append(events.size()).append(" di ")
+                    .append(anomalyLog.size()).append(" eventi in memoria)");
+        }
+        anomalyLogView.setText(sb.toString());
+    }
+
+    private String anomalyTypeLabel(AnomalyType type) {
+        if (type == AnomalyType.POSITION_JUMP) return "Salto posizione";
+        if (type == AnomalyType.GNSS_IMU_CONFLICT) return "Incoerenza GNSS/IMU";
+        if (type == AnomalyType.SPEED_CONFLICT) return "Incoerenza velocità";
+        if (type == AnomalyType.SIGNAL_ANOMALY) return "Anomalia segnale";
+        if (type == AnomalyType.GNSS_LOST) return "GNSS perso";
+        if (type == AnomalyType.GNSS_RECOVERED) return "GNSS ripristinato";
+        return type.name();
+    }
+
+    private String formatClock(long timeMs) {
+        return timeMs <= 0L ? "—" : clockFormat.format(new Date(timeMs));
     }
 
     private void updateUi() {
         runOnUiThread(() -> {
-            trustScoreView.setText(lastTrust + "%");
-            int color;
-            String status;
+            boolean available = lastAssessment != null && lastAssessment.available;
+            integrityScoreView.setText(available ? (integrityScore + "%") : "--%");
+            int color = colorForScore(available ? integrityScore : -1);
+            String status = available ? lastAssessment.level.label : "IN ATTESA DEL GNSS";
 
-            if (lastTrust >= 75) {
-                color = Color.rgb(118, 230, 177);
-                status = "GNSS COERENTE";
-            } else if (lastTrust >= 45) {
-                color = Color.rgb(255, 209, 102);
-                status = "ATTENDIBILITÀ RIDOTTA";
-            } else {
-                color = Color.rgb(255, 107, 107);
-                status = suspiciousJump ? "POSSIBILE SPOOFING / ANOMALIA" : "POSSIBILE INTERFERENZA";
-            }
-
-            trustScoreView.setTextColor(color);
+            integrityScoreView.setTextColor(color);
             statusView.setText(status);
             statusView.setTextColor(color);
             reasonView.setText(integrityReason);
 
-            String fix = currentLocation == null ? "--" : String.format(Locale.ITALY,
-                    "%.5f, %.5f ±%.0f m", currentLocation.getLatitude(), currentLocation.getLongitude(),
-                    currentLocation.hasAccuracy() ? currentLocation.getAccuracy() : 0f);
-            String cn0 = Double.isNaN(avgCn0) ? "--" : String.format(Locale.ITALY, "%.1f", avgCn0);
-            String agc = Double.isNaN(avgAgcDb) ? "--" : String.format(Locale.ITALY, "%.1f dB", avgAgcDb);
-            String imu = !imuAvailable ? "non disponibile" : String.format(Locale.ITALY,
+            String cn0 = Double.isNaN(avgCn0) ? "N/D" : String.format(Locale.ITALY, "%.1f dB-Hz", avgCn0);
+            String agc = Double.isNaN(avgAgcDb) ? "N/D" : String.format(Locale.ITALY, "%.1f dB", avgAgcDb);
+            String imu = !imuAvailable ? "N/D" : String.format(Locale.ITALY,
                     "acc %.2f m/s² • gyro %.2f rad/s", linearAcceleration, gyroRate);
+            MotionState motionState = lastAssessment == null
+                    ? motionAnalyzer.stateAt(System.currentTimeMillis())
+                    : lastAssessment.motionState;
+            String accuracy = (currentLocation == null || !currentLocation.hasAccuracy())
+                    ? "N/D"
+                    : String.format(Locale.ITALY, "±%.0f m", currentLocation.getAccuracy());
+            String position = currentLocation == null ? "N/D" : String.format(Locale.ITALY,
+                    "%.5f, %.5f", currentLocation.getLatitude(), currentLocation.getLongitude());
+            String lastFix = previousLocationTimeMs <= 0L ? "N/D" : formatClock(previousLocationTimeMs);
 
             diagnosticsView.setText(
-                    "Satelliti: " + satellitesVisible +
-                    "\nUsati nel fix: " + satellitesUsed +
-                    "\nC/N0 medio: " + cn0 + " dB-Hz" +
-                    "\nCostellazioni: " + constellationCount +
-                    "\nRaw GNSS: " + (rawGnssSeen ? (rawMeasurements + " misure") : "in attesa") +
-                    "\nAGC medio: " + agc +
-                    "\nIMU: " + imu +
-                    "\nVelocità stimata: " + String.format(Locale.ITALY, "%.1f m/s", lastComputedSpeedMps) +
-                    "\nUltimo fix: " + fix
+                    "Satelliti visibili:  " + satellitesVisible +
+                    "\nSatelliti usati:     " + satellitesUsed +
+                    "\nCostellazioni:       " + constellationCount +
+                    "\nC/N0 medio:          " + cn0 +
+                    "\nRaw GNSS:            " + (rawGnssSeen ? (rawMeasurements + " misure") : "in attesa") +
+                    "\nAGC medio:           " + agc +
+                    "\nIMU:                 " + imu +
+                    "\nMagnetometro:        " + (magnetometerAvailable ? "disponibile" : "N/D") +
+                    "\nMovimento:           " + motionLabel(motionState) +
+                    "\nVelocità stimata:    " + String.format(Locale.ITALY, "%.1f m/s", lastComputedSpeedMps) +
+                    "\nAccuracy:            " + accuracy +
+                    "\nPosizione:           " + position +
+                    "\nUltimo fix:          " + lastFix +
+                    "\nUltima pos. affid.:  " + formatClock(lastTrustedTimestampMs)
             );
+
+            // Advanced panels are refreshed only while they are actually on screen.
+            if (whyPanel != null && whyPanel.getVisibility() == View.VISIBLE) renderSubScores();
+            if (logPanel != null && logPanel.getVisibility() == View.VISIBLE) renderAnomalyLog();
             updateMap();
         });
     }
@@ -360,7 +580,7 @@ public class MainActivity extends Activity implements SensorEventListener, Locat
                 currentLocation.getLatitude(),
                 currentLocation.getLongitude(),
                 currentLocation.hasAccuracy() ? currentLocation.getAccuracy() : 0f,
-                lastTrust,
+                integrityScore,
                 Double.isNaN(trustedLat) ? "null" : String.format(Locale.US, "%.7f", trustedLat),
                 Double.isNaN(trustedLon) ? "null" : String.format(Locale.US, "%.7f", trustedLon),
                 trailJson.toString());
@@ -369,12 +589,18 @@ public class MainActivity extends Activity implements SensorEventListener, Locat
 
     @Override
     public void onSensorChanged(SensorEvent event) {
-        if (event.sensor.getType() == Sensor.TYPE_LINEAR_ACCELERATION) {
+        long now = System.currentTimeMillis();
+        int type = event.sensor.getType();
+        if (type == Sensor.TYPE_LINEAR_ACCELERATION) {
             linearAcceleration = magnitude(event.values);
-            if (linearAcceleration > 0.7f) lastImuMovementMs = System.currentTimeMillis();
-        } else if (event.sensor.getType() == Sensor.TYPE_GYROSCOPE) {
+            motionAnalyzer.onInertialSample(now, linearAcceleration, gyroRate);
+        } else if (type == Sensor.TYPE_GYROSCOPE) {
             gyroRate = magnitude(event.values);
-            if (gyroRate > 0.12f) lastImuMovementMs = System.currentTimeMillis();
+            motionAnalyzer.onInertialSample(now, linearAcceleration, gyroRate);
+        } else if (type == Sensor.TYPE_MAGNETIC_FIELD && event.values != null
+                && event.values.length >= 3) {
+            // Secondary indicator only: it can suppress a heading check, never raise an anomaly.
+            motionAnalyzer.onMagneticSample(now, event.values[0], event.values[1], event.values[2]);
         }
     }
 
@@ -384,12 +610,13 @@ public class MainActivity extends Activity implements SensorEventListener, Locat
     }
 
     @Override public void onAccuracyChanged(Sensor sensor, int accuracy) { }
-    @Override public void onProviderEnabled(String provider) { recomputeIntegrity(); }
-    @Override public void onProviderDisabled(String provider) { recomputeIntegrity(); }
+    @Override public void onProviderEnabled(String provider) { refreshIntegrity(); }
+    @Override public void onProviderDisabled(String provider) { refreshIntegrity(); }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        mainHandler.removeCallbacks(integrityTick);
         sensorManager.unregisterListener(this);
         if (mapView != null) mapView.destroy();
         try {
